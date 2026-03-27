@@ -1,89 +1,95 @@
 #!/bin/bash
-# ──────────────────────────────────────────────────────────────────────────────
-# setup-ssl.sh — Obtener certificado SSL con Let's Encrypt para
-#                tickets.admifarmgroup.com
-#
+# setup-ssl.sh — Let's Encrypt con certbot Docker (ARM64 compatible)
+# Ejecutar desde /opt/tickets-almuerzo como root
 # Uso: bash scripts/setup-ssl.sh
-# Requisitos:
-#   - El dominio tickets.admifarmgroup.com debe apuntar a este servidor
-#   - Docker y docker compose deben estar corriendo
-#   - Puertos 80 y 443 abiertos en el firewall
-# ──────────────────────────────────────────────────────────────────────────────
 
 set -e
 
 DOMAIN="tickets.admifarmgroup.com"
-EMAIL="it@admifarmgroup.com"   # <-- cambiar por el email real de IT
-COMPOSE_FILE="/opt/tickets-almuerzo/docker-compose.yml"
+EMAIL="it@admifarmgroup.com"
+COMPOSE_DIR="/opt/tickets-almuerzo"
+
+# Volúmenes Docker Compose (prefijo = nombre del directorio del proyecto)
+VOL_CERTBOT_WWW="tickets-almuerzo_certbot_www"
+VOL_LETSENCRYPT="tickets-almuerzo_letsencrypt_data"
+
+cd "$COMPOSE_DIR"
 
 echo ""
-echo "╔════════════════════════════════════════════════════╗"
+echo "╔══════════════════════════════════════════════════╗"
 echo "║   Setup SSL — Let's Encrypt — $DOMAIN   ║"
-echo "╚════════════════════════════════════════════════════╝"
+echo "╚══════════════════════════════════════════════════╝"
 echo ""
 
-# Verificar que nginx esté corriendo en HTTP
-echo "▶ Verificando que nginx esté activo en puerto 80..."
-if ! docker ps --filter "name=tickets_nginx" --filter "status=running" | grep -q tickets_nginx; then
-  echo "  ✗ nginx no está corriendo. Levantá los servicios primero:"
-  echo "    docker compose up -d"
+# 1. Verificar nginx responde en HTTP
+echo "→ Verificando nginx en http://$DOMAIN/nginx-health ..."
+sleep 2
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$DOMAIN/nginx-health" || echo "000")
+if [ "$HTTP_STATUS" != "200" ]; then
+  echo "  ERROR: nginx no responde (HTTP $HTTP_STATUS)."
+  echo "  Asegurate que el dominio apunta a este server y que docker compose está up."
   exit 1
 fi
-echo "  ✓ nginx corriendo"
+echo "  ✓ nginx OK"
+echo ""
 
-# Instalar certbot si no está
-if ! command -v certbot &> /dev/null; then
-  echo ""
-  echo "▶ Instalando certbot..."
-  apt-get update -qq
-  apt-get install -y -qq certbot
-  echo "  ✓ certbot instalado"
-fi
-
-# Obtener el volumen de certbot
-CERTBOT_WWW=$(docker volume inspect tickets-almuerzo_certbot_www \
-  --format '{{.Mountpoint}}' 2>/dev/null || echo "")
-
-if [ -z "$CERTBOT_WWW" ]; then
-  echo "  ✗ No se encontró el volumen certbot_www. Asegurate de haber hecho 'docker compose up -d' primero."
+# 2. Verificar volúmenes existen
+echo "→ Verificando volúmenes Docker..."
+docker volume inspect "$VOL_CERTBOT_WWW" > /dev/null 2>&1 || {
+  echo "  ERROR: Volumen $VOL_CERTBOT_WWW no existe."
+  echo "  Ejecutá primero: docker compose up -d"
   exit 1
-fi
-
+}
+echo "  ✓ Volúmenes OK"
 echo ""
-echo "▶ Obteniendo certificado para $DOMAIN..."
-certbot certonly \
-  --webroot \
-  --webroot-path="$CERTBOT_WWW" \
-  --email "$EMAIL" \
-  --agree-tos \
-  --no-eff-email \
-  --domain "$DOMAIN" \
-  --non-interactive
 
-echo ""
-echo "▶ Certificado obtenido. Copiando certs al volumen Docker..."
-LETSENCRYPT_VOL=$(docker volume inspect tickets-almuerzo_letsencrypt_data \
-  --format '{{.Mountpoint}}')
-cp -rL /etc/letsencrypt/. "$LETSENCRYPT_VOL/"
+# 3. Obtener certificado con certbot Docker (multi-arch: AMD64 + ARM64)
+echo "→ Ejecutando certbot (imagen Docker multi-arch)..."
+docker run --rm \
+  -v "${VOL_LETSENCRYPT}:/etc/letsencrypt" \
+  -v "${VOL_CERTBOT_WWW}:/var/www/certbot" \
+  certbot/certbot certonly \
+    --webroot \
+    --webroot-path=/var/www/certbot \
+    --domain "$DOMAIN" \
+    --email "$EMAIL" \
+    --agree-tos \
+    --no-eff-email \
+    --non-interactive \
+    --force-renewal
 
+echo "  ✓ Certificado obtenido"
 echo ""
-echo "▶ Activando configuración HTTPS de nginx..."
-cp "$(dirname "$0")/../nginx/nginx-ssl.conf" \
-   "$(dirname "$0")/../nginx/nginx.conf"
 
+# 4. Activar nginx SSL
+echo "→ Activando nginx con SSL..."
+cp nginx/nginx-ssl.conf nginx/nginx.conf
+docker compose restart nginx
+sleep 3
+echo "  ✓ nginx reiniciado con SSL"
 echo ""
-echo "▶ Reiniciando nginx con SSL..."
-docker compose -f "$COMPOSE_FILE" restart nginx
 
+# 5. Actualizar NEXTAUTH_URL a https en .env
+echo "→ Actualizando NEXTAUTH_URL a https..."
+sed -i 's|NEXTAUTH_URL="http://|NEXTAUTH_URL="https://|g' .env
+sed -i 's|NEXTAUTH_URL=http://|NEXTAUTH_URL=https://|g' .env
+grep NEXTAUTH_URL .env
+docker compose restart app
+sleep 5
+echo "  ✓ App reiniciada"
 echo ""
-echo "▶ Configurando renovación automática del certificado (cron)..."
-# Renovar cada 60 días a las 3:00 AM
-CRON_JOB="0 3 */60 * * certbot renew --quiet && cp -rL /etc/letsencrypt/. $LETSENCRYPT_VOL/ && docker compose -f $COMPOSE_FILE restart nginx"
-(crontab -l 2>/dev/null | grep -v "certbot renew"; echo "$CRON_JOB") | crontab -
-echo "  ✓ Renovación automática configurada"
 
+# 6. Instalar cron de renovación automática
+echo "→ Configurando renovación automática (cron — todos los días a las 3am)..."
+CRON_JOB="0 3 * * * bash $COMPOSE_DIR/scripts/renew-ssl.sh >> /var/log/certbot-renew.log 2>&1"
+(crontab -l 2>/dev/null | grep -v "renew-ssl.sh"; echo "$CRON_JOB") | crontab -
+echo "  ✓ Cron instalado"
 echo ""
-echo "══════════════════════════════════════════════════════"
-echo "  ✅  SSL activo en https://$DOMAIN"
-echo "══════════════════════════════════════════════════════"
+
+echo "╔══════════════════════════════════════════════════╗"
+echo "║   ✅  SSL activo en https://$DOMAIN   ║"
+echo "╚══════════════════════════════════════════════════╝"
+echo ""
+echo "Próximo paso — cargar empleados:"
+echo "  docker exec tickets_app node_modules/.bin/tsx prisma/seed.ts"
 echo ""
