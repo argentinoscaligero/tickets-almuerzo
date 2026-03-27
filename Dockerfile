@@ -1,5 +1,6 @@
 FROM node:20-alpine AS base
-RUN apk add --no-cache libc6-compat
+# netcat para health-check de DB en el entrypoint
+RUN apk add --no-cache libc6-compat netcat-openbsd
 WORKDIR /app
 
 # ── Dependencias ──────────────────────────────────────────────────────────────
@@ -28,13 +29,22 @@ RUN adduser --system --uid 1001 nextjs
 
 RUN mkdir -p /app/uploads && chown nextjs:nodejs /app/uploads
 
+# App standalone
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/scripts/docker-entrypoint.sh ./docker-entrypoint.sh
 
+# Schema de Prisma (necesario para db push)
+COPY --from=builder /app/prisma ./prisma
+
+# Cliente generado de Prisma (query engine)
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+
+# CLI de Prisma (necesario para db push en el entrypoint)
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+
+COPY --from=builder /app/scripts/docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
 
 USER nextjs
