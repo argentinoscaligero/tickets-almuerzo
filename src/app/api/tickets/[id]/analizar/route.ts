@@ -5,18 +5,19 @@ import { analizarTicketConIA } from '@/lib/ai'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth()
   if (!session) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
 
+  const { id: ticketId } = await params
+
   const ticket = await prisma.ticket.findUnique({
-    where: { id: params.id },
+    where: { id: ticketId },
     include: { usuario: true },
   })
 
   if (!ticket) return NextResponse.json({ error: 'Ticket no encontrado' }, { status: 404 })
 
-  // Solo el dueño o admin pueden disparar el análisis
   if (ticket.usuarioId !== session.user.id && session.user.rol !== 'ADMIN') {
     return NextResponse.json({ error: 'Sin permiso' }, { status: 403 })
   }
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   // Marcar como ANALIZANDO
   await prisma.ticket.update({
-    where: { id: params.id },
+    where: { id: ticketId },
     data: { estado: 'ANALIZANDO' },
   })
 
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     // Guardar resultado en BD
     const updatedTicket = await prisma.ticket.update({
-      where: { id: params.id },
+      where: { id: ticketId },
       data: {
         estado: 'PENDIENTE_VALIDADOR',
         dictamenIA: dictamen.dictamen,
@@ -74,7 +75,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // Registrar acción
     await prisma.accionTicket.create({
       data: {
-        ticketId: params.id,
+        ticketId,
         usuarioId: session.user.id,
         tipo: 'IA_ANALIZO',
         comentario: `Dictamen IA: ${dictamen.dictamen} (confianza: ${dictamen.confianza}%). ${dictamen.observaciones}`,
@@ -86,7 +87,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     console.error('Error en análisis IA:', err)
     // Volver a SUBIDO si falla para poder reintentar
     await prisma.ticket.update({
-      where: { id: params.id },
+      where: { id: ticketId },
       data: { estado: 'SUBIDO' },
     })
     return NextResponse.json({ error: 'Error al analizar con IA. Intentá de nuevo.' }, { status: 500 })

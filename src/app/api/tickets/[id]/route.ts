@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth()
   if (!session) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
 
+  const { id: ticketId } = await params
   const ticket = await prisma.ticket.findUnique({
-    where: { id: params.id },
+    where: { id: ticketId },
     include: {
       usuario: { include: { sector: true, planilla: true } },
       acciones: {
@@ -20,22 +21,22 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!ticket) return NextResponse.json({ error: 'Ticket no encontrado' }, { status: 404 })
 
   // Verificar acceso
-  const { id, rol } = session.user
-  if (rol === 'EMPLEADO' && ticket.usuarioId !== id) {
+  const { id: userId, rol } = session.user
+  if (rol === 'EMPLEADO' && ticket.usuarioId !== userId) {
     return NextResponse.json({ error: 'Sin permiso' }, { status: 403 })
   }
 
   return NextResponse.json({ ticket })
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth()
   if (!session) return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
 
-  const ticket = await prisma.ticket.findUnique({ where: { id: params.id } })
+  const { id: ticketId } = await params
+  const ticket = await prisma.ticket.findUnique({ where: { id: ticketId } })
   if (!ticket) return NextResponse.json({ error: 'Ticket no encontrado' }, { status: 404 })
 
-  // Solo el empleado dueño puede borrar, y solo si está en estado SUBIDO o ANALIZANDO
   if (ticket.usuarioId !== session.user.id && session.user.rol !== 'ADMIN') {
     return NextResponse.json({ error: 'Sin permiso' }, { status: 403 })
   }
@@ -43,6 +44,6 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ error: 'No se puede eliminar un ticket que ya está en proceso de revisión' }, { status: 400 })
   }
 
-  await prisma.ticket.delete({ where: { id: params.id } })
+  await prisma.ticket.delete({ where: { id: ticketId } })
   return NextResponse.json({ ok: true })
 }
