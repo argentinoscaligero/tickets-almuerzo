@@ -1,6 +1,7 @@
 FROM node:20-alpine AS base
-# netcat para health-check de DB en el entrypoint
-RUN apk add --no-cache libc6-compat netcat-openbsd
+# openssl: requerido por Prisma para conectarse a PostgreSQL
+# netcat-openbsd: para el health-check de DB en el entrypoint
+RUN apk add --no-cache libc6-compat openssl netcat-openbsd
 WORKDIR /app
 
 # ── Dependencias ──────────────────────────────────────────────────────────────
@@ -13,7 +14,6 @@ FROM base AS builder
 COPY package*.json ./
 RUN npm ci
 COPY . .
-# Eliminar prisma.config.ts si existe (es de Prisma v7, usamos v5)
 RUN rm -f prisma.config.ts
 RUN npx prisma generate
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -29,20 +29,18 @@ RUN adduser --system --uid 1001 nextjs
 
 RUN mkdir -p /app/uploads && chown nextjs:nodejs /app/uploads
 
-# App standalone
+# App standalone de Next.js
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Schema de Prisma (necesario para db push)
-COPY --from=builder /app/prisma ./prisma
+# Schema de Prisma
+COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
-# Cliente generado de Prisma (query engine)
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-
-# CLI de Prisma (necesario para db push en el entrypoint)
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+# Cliente generado + CLI de Prisma — con ownership correcto (corre como nextjs)
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 
 COPY --from=builder /app/scripts/docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
