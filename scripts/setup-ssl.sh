@@ -1,56 +1,60 @@
 #!/bin/bash
-# setup-ssl.sh — Let's Encrypt con certbot Docker (ARM64 compatible)
-# Ejecutar desde /opt/tickets-almuerzo como root
+# setup-ssl.sh — Let's Encrypt con Cloudflare DNS challenge (ARM64 compatible)
+# No requiere que el puerto 80 sea accesible desde internet.
 # Uso: bash scripts/setup-ssl.sh
+# Requisito: /root/.cloudflare.ini con dns_cloudflare_api_token = TOKEN
 
 set -e
 
 DOMAIN="tickets.admifarmgroup.com"
 EMAIL="it@admifarmgroup.com"
+CLOUDFLARE_INI="/root/.cloudflare.ini"
 COMPOSE_DIR="/opt/tickets-almuerzo"
 
-# Volúmenes Docker Compose (prefijo = nombre del directorio del proyecto)
-VOL_CERTBOT_WWW="tickets-almuerzo_certbot_www"
 VOL_LETSENCRYPT="tickets-almuerzo_letsencrypt_data"
 
 cd "$COMPOSE_DIR"
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"
-echo "║   Setup SSL — Let's Encrypt — $DOMAIN   ║"
+echo "║   Setup SSL — Cloudflare DNS — $DOMAIN  ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo ""
 
-# 1. Verificar nginx responde en HTTP
-echo "→ Verificando nginx en http://$DOMAIN/nginx-health ..."
-sleep 2
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://$DOMAIN/nginx-health" || echo "000")
-if [ "$HTTP_STATUS" != "200" ]; then
-  echo "  ERROR: nginx no responde (HTTP $HTTP_STATUS)."
-  echo "  Asegurate que el dominio apunta a este server y que docker compose está up."
+# 1. Verificar .cloudflare.ini
+echo "→ Verificando credenciales Cloudflare..."
+if [ ! -f "$CLOUDFLARE_INI" ]; then
+  echo "  ERROR: No se encontró $CLOUDFLARE_INI"
+  echo "  Crealo con:"
+  echo "    echo 'dns_cloudflare_api_token = TU_TOKEN' > /root/.cloudflare.ini"
+  echo "    chmod 600 /root/.cloudflare.ini"
   exit 1
 fi
-echo "  ✓ nginx OK"
+# Asegurar permisos correctos (certbot los exige)
+chmod 600 "$CLOUDFLARE_INI"
+echo "  ✓ $CLOUDFLARE_INI OK (chmod 600)"
 echo ""
 
-# 2. Verificar volúmenes existen
-echo "→ Verificando volúmenes Docker..."
-docker volume inspect "$VOL_CERTBOT_WWW" > /dev/null 2>&1 || {
-  echo "  ERROR: Volumen $VOL_CERTBOT_WWW no existe."
+# 2. Verificar que el volumen de letsencrypt exista
+echo "→ Verificando volumen Docker..."
+docker volume inspect "$VOL_LETSENCRYPT" > /dev/null 2>&1 || {
+  echo "  ERROR: Volumen $VOL_LETSENCRYPT no existe."
   echo "  Ejecutá primero: docker compose up -d"
   exit 1
 }
-echo "  ✓ Volúmenes OK"
+echo "  ✓ Volumen OK"
 echo ""
 
-# 3. Obtener certificado con certbot Docker (multi-arch: AMD64 + ARM64)
-echo "→ Ejecutando certbot (imagen Docker multi-arch)..."
+# 3. Obtener certificado con certbot DNS Cloudflare (imagen multi-arch ARM64/AMD64)
+echo "→ Ejecutando certbot con Cloudflare DNS challenge..."
+echo "  (certbot/dns-cloudflare — esperar ~30 segundos de propagación DNS)"
 docker run --rm \
   -v "${VOL_LETSENCRYPT}:/etc/letsencrypt" \
-  -v "${VOL_CERTBOT_WWW}:/var/www/certbot" \
-  certbot/certbot certonly \
-    --webroot \
-    --webroot-path=/var/www/certbot \
+  -v "${CLOUDFLARE_INI}:/root/.cloudflare.ini:ro" \
+  certbot/dns-cloudflare certonly \
+    --dns-cloudflare \
+    --dns-cloudflare-credentials /root/.cloudflare.ini \
+    --dns-cloudflare-propagation-seconds 30 \
     --domain "$DOMAIN" \
     --email "$EMAIL" \
     --agree-tos \
@@ -58,7 +62,7 @@ docker run --rm \
     --non-interactive \
     --force-renewal
 
-echo "  ✓ Certificado obtenido"
+echo "  ✓ Certificado obtenido y guardado en volumen $VOL_LETSENCRYPT"
 echo ""
 
 # 4. Activar nginx SSL
@@ -66,7 +70,14 @@ echo "→ Activando nginx con SSL..."
 cp nginx/nginx-ssl.conf nginx/nginx.conf
 docker compose restart nginx
 sleep 3
-echo "  ✓ nginx reiniciado con SSL"
+
+# Verificar que nginx levantó
+if docker ps --filter "name=tickets_nginx" --filter "status=running" | grep -q tickets_nginx; then
+  echo "  ✓ nginx corriendo con SSL"
+else
+  echo "  ERROR: nginx no levantó. Revisá: docker logs tickets_nginx"
+  exit 1
+fi
 echo ""
 
 # 5. Actualizar NEXTAUTH_URL a https en .env
@@ -76,20 +87,21 @@ sed -i 's|NEXTAUTH_URL=http://|NEXTAUTH_URL=https://|g' .env
 grep NEXTAUTH_URL .env
 docker compose restart app
 sleep 5
-echo "  ✓ App reiniciada"
+echo "  ✓ App reiniciada con NEXTAUTH_URL https"
 echo ""
 
-# 6. Instalar cron de renovación automática
-echo "→ Configurando renovación automática (cron — todos los días a las 3am)..."
+# 6. Instalar cron de renovación automática (diaria a las 3am)
+echo "→ Configurando renovación automática..."
 CRON_JOB="0 3 * * * bash $COMPOSE_DIR/scripts/renew-ssl.sh >> /var/log/certbot-renew.log 2>&1"
 (crontab -l 2>/dev/null | grep -v "renew-ssl.sh"; echo "$CRON_JOB") | crontab -
-echo "  ✓ Cron instalado"
+echo "  ✓ Cron instalado (todos los días 3:00 AM)"
+crontab -l | grep renew-ssl
 echo ""
 
 echo "╔══════════════════════════════════════════════════╗"
-echo "║   ✅  SSL activo en https://$DOMAIN   ║"
+echo "║   ✅  SSL activo en https://$DOMAIN  ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo ""
-echo "Próximo paso — cargar empleados:"
+echo "Siguiente paso — cargar los 135 empleados:"
 echo "  docker exec tickets_app node_modules/.bin/tsx prisma/seed.ts"
 echo ""
