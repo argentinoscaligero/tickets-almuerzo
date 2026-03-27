@@ -8,13 +8,13 @@ echo ""
 
 echo "==> Verificando conexion a base de datos..."
 RETRIES=15
-until npx prisma db execute --stdin <<< "SELECT 1" > /dev/null 2>&1 || [ $RETRIES -eq 0 ]; do
+until echo "SELECT 1" | npx prisma db execute --stdin > /dev/null 2>&1 || [ "$RETRIES" -eq 0 ]; do
   echo "    Esperando DB... ($RETRIES intentos restantes)"
   RETRIES=$((RETRIES - 1))
   sleep 3
 done
 
-if [ $RETRIES -eq 0 ]; then
+if [ "$RETRIES" -eq 0 ]; then
   echo "ERROR: No se pudo conectar a la base de datos"
   exit 1
 fi
