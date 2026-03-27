@@ -39,3 +39,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/src/generated/prisma
+
+# uploads (imágenes de tickets - no van al repo)
+/uploads/
+
+# prisma v7 config (no aplica)
+prisma.config.ts
+
+# backups locales
+/backups/
+
+# claude context local
+/.claude/

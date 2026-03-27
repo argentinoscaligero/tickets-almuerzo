@@ -1,0 +1,257 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ────────────────────────────────────────────────────────────────────
+
+enum Rol {
+  EMPLEADO
+  VALIDADOR    // Designado por el área - primer nivel humano de revisión
+  CONTROLADOR  // Administración / Cuentas a Pagar - segundo nivel
+  RRHH         // Aprobación final
+  TESORERIA    // Liquidación y pago
+  ADMIN        // Configuración técnica
+}
+
+enum EstadoTicket {
+  SUBIDO                // Recién subido, esperando análisis IA
+  ANALIZANDO            // La IA está procesando
+  PENDIENTE_VALIDADOR   // Dictamen emitido, esperando al Validador del área
+  APROBADO_VALIDADOR    // Aprobado por Validador (con o sin excepción)
+  RECHAZADO_VALIDADOR   // Rechazado por Validador
+  PENDIENTE_CONTROLADOR // Esperando revisión del Controlador (Administración)
+  APROBADO_CONTROLADOR  // Aprobado por Controlador
+  RECHAZADO_CONTROLADOR // Rechazado por Controlador
+  PENDIENTE_RRHH        // Esperando aprobación final de RRHH
+  APROBADO_RRHH         // Aprobado por RRHH - listo para Tesorería
+  RECHAZADO_RRHH        // Rechazado por RRHH
+  EN_TESORERIA          // Enviado a Tesorería para liquidación
+  PAGADO                // Liquidado y pagado
+}
+
+enum DictamenIA {
+  VERDE    // Todo OK - el Validador puede aprobar directo
+  AMARILLO // Algo dudoso - el Validador debe revisar el detalle
+  ROJO     // Incumplimiento detectado - el Validador decide (puede hacer excepción)
+}
+
+enum MotivoRechazo {
+  R01_ILEGIBLE
+  R02_NO_GASTRONOMICO
+  R03_PRODUCTOS_INVALIDOS
+  R04_FECHA_INVALIDA
+  R05_HORARIO_INVALIDO
+  R06_MONTO_SUPERA_TOPE
+  R07_DUPLICADO
+  R08_PERTENECE_OTRO_EMPLEADO
+  R09_EXCEPCION_APROBADA
+  R10_OTRO
+}
+
+enum ProveedorIA {
+  CLAUDE
+  OPENAI
+  DEEPSEEK
+  GEMINI
+  OLLAMA
+}
+
+// ─── EMPRESA ──────────────────────────────────────────────────────────────────
+
+model Empresa {
+  id     String @id @default(uuid())
+  nombre String
+  cuit   String?
+
+  sectores  Sector[]
+  planillas Planilla[]
+  config    ConfigSistema?
+}
+
+// ─── SECTORES ─────────────────────────────────────────────────────────────────
+
+model Sector {
+  id        String @id @default(uuid())
+  nombre    String
+  empresaId String
+
+  empresa   Empresa   @relation(fields: [empresaId], references: [id])
+  empleados Usuario[]
+
+  @@unique([nombre, empresaId])
+}
+
+// ─── PLANILLAS (grupos de rendición semanal) ──────────────────────────────────
+
+model Planilla {
+  id          String  @id @default(uuid())
+  nombre      String
+  descripcion String?
+  empresaId   String
+  activa      Boolean @default(true)
+
+  empresa       Empresa             @relation(fields: [empresaId], references: [id])
+  empleados     Usuario[]           @relation("EmpleadoPlanilla")
+  validadores   PlanillaValidador[]
+  tickets       Ticket[]
+  liquidaciones Liquidacion[]
+
+  @@unique([nombre, empresaId])
+}
+
+// Relación Planilla <-> Validador (muchos a muchos)
+model PlanillaValidador {
+  planillaId  String
+  validadorId String
+  asignadoEn  DateTime @default(now())
+
+  planilla  Planilla @relation(fields: [planillaId], references: [id])
+  validador Usuario  @relation(fields: [validadorId], references: [id])
+
+  @@id([planillaId, validadorId])
+}
+
+// ─── USUARIOS ─────────────────────────────────────────────────────────────────
+
+model Usuario {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  nombre       String
+  apellido     String
+  legajo       String?   @unique
+  rol          Rol
+  activo       Boolean   @default(true)
+  sectorId     String?
+  planillaId   String?
+  creadoEn     DateTime  @default(now())
+  actualizadoEn DateTime @updatedAt
+  ultimoLoginEn DateTime?
+
+  sector             Sector?             @relation(fields: [sectorId], references: [id])
+  planilla           Planilla?           @relation("EmpleadoPlanilla", fields: [planillaId], references: [id])
+  planillasValidador PlanillaValidador[]
+  tickets            Ticket[]
+  acciones           AccionTicket[]
+  liquidacionesCreadas Liquidacion[]
+}
+
+// ─── TICKETS ──────────────────────────────────────────────────────────────────
+
+model Ticket {
+  id        String       @id @default(uuid())
+  usuarioId String
+  planillaId String?
+  estado    EstadoTicket @default(SUBIDO)
+
+  // Imagen
+  imagenUrl  String
+  mimeType   String       @default("image/jpeg")
+  imagenHash String?      // SHA256 para detectar duplicados
+
+  // Dictamen de la IA (sólo asesora, nunca decide)
+  dictamenIA          DictamenIA?
+  confianzaIA         Int?
+  proveedorIA         ProveedorIA?
+  comercioDetectado   String?
+  productosDetectados String[]
+  montoDetectado      Decimal?    @db.Decimal(10, 2)
+  fechaDetectada      DateTime?
+  horaDetectada       String?
+  observacionesIA     String?     @db.Text
+  alertasIA           String[]
+  rawResponseIA       String?     @db.Text
+
+  // Motivo de rechazo (si aplica)
+  motivoRechazo MotivoRechazo?
+
+  // Control de semana: "2025-W45"
+  semana String?
+
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  usuario  Usuario        @relation(fields: [usuarioId], references: [id])
+  planilla Planilla?      @relation(fields: [planillaId], references: [id])
+  acciones AccionTicket[]
+  liquidacionItem LiquidacionItem?
+
+  @@index([usuarioId, semana])
+  @@index([planillaId, estado])
+  @@index([estado])
+}
+
+// ─── HISTORIAL DE ACCIONES ────────────────────────────────────────────────────
+
+model AccionTicket {
+  id            String         @id @default(uuid())
+  ticketId      String
+  usuarioId     String
+  tipo          String         // IA_ANALIZO | APROBADO_VALIDADOR | RECHAZADO_VALIDADOR | etc.
+  comentario    String?        @db.Text
+  motivoRechazo MotivoRechazo?
+  creadoEn      DateTime       @default(now())
+
+  ticket  Ticket  @relation(fields: [ticketId], references: [id])
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@index([ticketId])
+}
+
+// ─── LIQUIDACIONES ────────────────────────────────────────────────────────────
+
+model Liquidacion {
+  id           String   @id @default(uuid())
+  semana       String   // "2025-W45"
+  planillaId   String?
+  totalMonto   Decimal  @default(0) @db.Decimal(10, 2)
+  totalTickets Int      @default(0)
+  creadoPorId  String
+  creadoEn     DateTime @default(now())
+
+  planilla   Planilla?         @relation(fields: [planillaId], references: [id])
+  creadoPor  Usuario           @relation(fields: [creadoPorId], references: [id])
+  items      LiquidacionItem[]
+
+  @@index([semana])
+}
+
+model LiquidacionItem {
+  id            String  @id @default(uuid())
+  liquidacionId String
+  usuarioId     String
+  ticketId      String  @unique
+  monto         Decimal @db.Decimal(10, 2)
+
+  liquidacion Liquidacion @relation(fields: [liquidacionId], references: [id])
+  ticket      Ticket      @relation(fields: [ticketId], references: [id])
+}
+
+// ─── CONFIGURACIÓN DEL SISTEMA ────────────────────────────────────────────────
+
+model ConfigSistema {
+  id            Int      @id @default(1)
+  empresaId     String?  @unique
+  topeDiario    Decimal  @default(12000) @db.Decimal(10, 2)
+  horarioInicio String   @default("12:00")
+  horarioFin    String   @default("15:00")
+  proveedorIA   String   @default("claude")
+  umbralConfianza Int    @default(70)
+  actualizadoEn DateTime @updatedAt
+
+  empresa Empresa? @relation(fields: [empresaId], references: [id])
+}
+
+// ─── FERIADOS ─────────────────────────────────────────────────────────────────
+
+model Feriado {
+  id       String   @id @default(uuid())
+  fecha    DateTime @unique @db.Date
+  nombre   String
+  creadoEn DateTime @default(now())
+}

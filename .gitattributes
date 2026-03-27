@@ -1,0 +1,8 @@
+# Forzar LF para todos los archivos de texto (importante para scripts .sh en Linux)
+* text=auto eol=lf
+
+# Scripts shell — siempre LF
+*.sh text eol=lf
+
+# Archivos Windows que pueden necesitar CRLF
+*.sln text eol=crlf

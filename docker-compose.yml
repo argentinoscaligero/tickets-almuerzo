@@ -1,0 +1,118 @@
+# docker-compose.yml — Sistema Tickets de Almuerzo
+# AG Servicios Farmacéuticos SA — tickets.admifarmgroup.com
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tickets_app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://tickets_user:${POSTGRES_PASSWORD}@postgres:5432/tickets_almuerzo
+      - REDIS_URL=redis://redis:6379
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-https://tickets.admifarmgroup.com}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://tickets.admifarmgroup.com}
+      - AI_PROVIDER=${AI_PROVIDER:-claude}
+      - AI_CONFIDENCE_THRESHOLD=${AI_CONFIDENCE_THRESHOLD:-70}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llava}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-tickets@admifarmgroup.com}
+      - UPLOAD_DIR=/app/uploads
+      - TOPE_DIARIO_DEFAULT=${TOPE_DIARIO_DEFAULT:-12000}
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - tickets_net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: tickets_postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=tickets_almuerzo
+      - POSTGRES_USER=tickets_user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tickets_user -d tickets_almuerzo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tickets_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: tickets_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tickets_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: tickets_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - letsencrypt_data:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+      - uploads_data:/var/www/uploads:ro
+    depends_on:
+      - app
+    networks:
+      - tickets_net
+
+  backup:
+    image: postgres:16-alpine
+    container_name: tickets_backup
+    restart: unless-stopped
+    environment:
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - backups_data:/backups
+      - ./scripts/backup.sh:/backup.sh:ro
+    entrypoint: ["/bin/sh", "-c", "while true; do sleep 86400; sh /backup.sh; done"]
+    depends_on:
+      - postgres
+    networks:
+      - tickets_net
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+  backups_data:
+  letsencrypt_data:
+  certbot_www:
+
+networks:
+  tickets_net:
+    driver: bridge

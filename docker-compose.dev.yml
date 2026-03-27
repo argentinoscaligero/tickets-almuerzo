@@ -1,0 +1,39 @@
+version: '3.9'
+
+# Uso: docker-compose -f docker-compose.dev.yml up
+# Para desarrollo local: solo levanta postgres y redis, la app corre con npm run dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tickets_postgres_dev
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=tickets_almuerzo
+      - POSTGRES_USER=tickets_user
+      - POSTGRES_PASSWORD=dev_password_123
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    networks:
+      - tickets_dev_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: tickets_redis_dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - tickets_dev_net
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+
+networks:
+  tickets_dev_net:
+    driver: bridge
