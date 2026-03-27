@@ -11,6 +11,7 @@ type Ticket = {
   confianzaIA?: number
   comercioDetectado?: string
   montoDetectado?: number
+  montoReintegro?: number
   fechaDetectada?: string
   horaDetectada?: string
   observacionesIA?: string
@@ -155,7 +156,7 @@ export default function RevisionTickets({ estadoPendiente, titulo, subtitulo }: 
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Imagen</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Empleado</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Comercio</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Monto</th>
+                <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Ticket / Reintegro</th>
                 <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Dictamen IA</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Fecha</th>
                 <th className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Acciones</th>
@@ -182,8 +183,15 @@ export default function RevisionTickets({ estadoPendiente, titulo, subtitulo }: 
                     <td className="px-4 py-3 text-gray-600">
                       {t.comercioDetectado || <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-right font-medium text-gray-800">
-                      {t.montoDetectado ? formatMonto(t.montoDetectado) : <span className="text-gray-300">—</span>}
+                    <td className="px-4 py-3 text-right">
+                      {t.montoDetectado ? (
+                        <div>
+                          <div className="font-medium text-gray-800">{formatMonto(t.montoReintegro ?? t.montoDetectado)}</div>
+                          {t.montoReintegro !== undefined && t.montoDetectado !== undefined && t.montoReintegro < t.montoDetectado && (
+                            <div className="text-xs text-amber-600">ticket: {formatMonto(t.montoDetectado)}</div>
+                          )}
+                        </div>
+                      ) : <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-4 py-3 text-center">
                       {dictCfg ? (
@@ -251,7 +259,13 @@ export default function RevisionTickets({ estadoPendiente, titulo, subtitulo }: 
                 <img src={selected.imagenUrl} alt="" className="w-16 h-16 rounded-lg object-cover border border-gray-200 shrink-0" />
                 <div className="text-sm">
                   <p className="font-medium text-gray-800">{selected.usuario.nombre}</p>
-                  <p className="text-gray-500">{selected.comercioDetectado || '—'} · {selected.montoDetectado ? formatMonto(selected.montoDetectado) : '—'}</p>
+                  <p className="text-gray-500">
+                    {selected.comercioDetectado || '—'} ·{' '}
+                    {selected.montoDetectado ? formatMonto(selected.montoDetectado) : '—'}
+                    {selected.montoReintegro !== undefined && selected.montoDetectado !== undefined && selected.montoReintegro < selected.montoDetectado && (
+                      <span className="ml-1 text-amber-600 font-medium">(reintegro: {formatMonto(selected.montoReintegro)})</span>
+                    )}
+                  </p>
                   {selected.dictamenIA && (
                     <p className="mt-1">
                       {DICTAMEN_CONFIG[selected.dictamenIA as keyof typeof DICTAMEN_CONFIG]?.emoji}{' '}
@@ -375,7 +389,14 @@ function TicketDetailModal({ ticket, onClose }: { ticket: Ticket; onClose: () =>
 
           <div className="bg-gray-50 rounded-xl p-4 space-y-2 text-sm">
             {ticket.comercioDetectado && <Row label="Comercio" value={ticket.comercioDetectado} />}
-            {ticket.montoDetectado ? <Row label="Monto" value={formatMonto(ticket.montoDetectado)} /> : null}
+            {ticket.montoDetectado ? <Row label="Monto ticket" value={formatMonto(ticket.montoDetectado)} /> : null}
+            {ticket.montoReintegro !== undefined && ticket.montoDetectado !== undefined ? (
+              <Row
+                label="Monto a reintegrar"
+                value={formatMonto(ticket.montoReintegro)}
+                highlight={ticket.montoReintegro < ticket.montoDetectado}
+              />
+            ) : null}
             {ticket.fechaDetectada && <Row label="Fecha" value={formatFecha(ticket.fechaDetectada)} />}
             {ticket.horaDetectada && <Row label="Hora" value={ticket.horaDetectada} />}
             <Row label="Sector" value={ticket.usuario.sector?.nombre ?? '—'} />
@@ -386,11 +407,11 @@ function TicketDetailModal({ ticket, onClose }: { ticket: Ticket; onClose: () =>
   )
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div className="flex justify-between">
       <span className="text-gray-500">{label}</span>
-      <span className="font-medium text-gray-800">{value}</span>
+      <span className={`font-medium ${highlight ? 'text-amber-600' : 'text-gray-800'}`}>{value}</span>
     </div>
   )
 }

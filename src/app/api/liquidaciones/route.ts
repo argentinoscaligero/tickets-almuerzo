@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
         }
       }
       porPlanilla[p].empleados[u].tickets.push(t)
-      porPlanilla[p].empleados[u].total += Number(t.montoDetectado ?? 0)
+      porPlanilla[p].empleados[u].total += Number(t.montoReintegro ?? t.montoDetectado ?? 0)
     }
 
     const resultado = Object.values(porPlanilla).map(p => ({
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No hay tickets en Tesorería para esta semana' }, { status: 400 })
   }
 
-  const totalMonto = tickets.reduce((s, t) => s + Number(t.montoDetectado ?? 0), 0)
+  const totalMonto = tickets.reduce((s, t) => s + Number(t.montoReintegro ?? t.montoDetectado ?? 0), 0)
 
   // Crear liquidación en transacción
   const liquidacion = await prisma.$transaction(async (tx) => {
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
         liquidacionId: liq.id,
         usuarioId: t.usuarioId,
         ticketId: t.id,
-        monto: Number(t.montoDetectado ?? 0),
+        monto: Number(t.montoReintegro ?? t.montoDetectado ?? 0),
       })),
     })
 

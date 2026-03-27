@@ -11,6 +11,7 @@ type Ticket = {
   confianzaIA?: number
   comercioDetectado?: string
   montoDetectado?: number
+  montoReintegro?: number
   fechaDetectada?: string
   horaDetectada?: string
   observacionesIA?: string
@@ -285,7 +286,10 @@ function TicketModal({ ticket, onClose }: { ticket: Ticket; onClose: () => void 
               {ticket.comercioDetectado && (
                 <Row label="Comercio" value={ticket.comercioDetectado} />
               )}
-              {ticket.montoDetectado ? <Row label="Monto" value={formatMonto(ticket.montoDetectado)} /> : null}
+              {ticket.montoDetectado ? <Row label="Monto ticket" value={formatMonto(ticket.montoDetectado)} /> : null}
+              {ticket.montoReintegro !== undefined && ticket.montoDetectado !== undefined ? (
+                <Row label="Monto a reintegrar" value={formatMonto(ticket.montoReintegro)} />
+              ) : null}
               {ticket.fechaDetectada && <Row label="Fecha" value={formatFecha(ticket.fechaDetectada)} />}
               {ticket.horaDetectada && <Row label="Hora" value={ticket.horaDetectada} />}
             </div>

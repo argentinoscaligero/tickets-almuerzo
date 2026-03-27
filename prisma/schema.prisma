@@ -161,6 +161,7 @@ model Ticket {
   comercioDetectado   String?
   productosDetectados String[]
   montoDetectado      Decimal?    @db.Decimal(10, 2)
+  montoReintegro      Decimal?    @db.Decimal(10, 2)   // min(montoDetectado, topeDiario)
   fechaDetectada      DateTime?
   horaDetectada       String?
   observacionesIA     String?     @db.Text
