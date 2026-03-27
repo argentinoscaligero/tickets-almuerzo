@@ -30,6 +30,7 @@ export default function EmpleadoPage() {
   const [analyzing, setAnalyzing] = useState(false)
   const [uploadError, setUploadError] = useState('')
   const [preview, setPreview] = useState<string | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const hoy = new Date()
@@ -60,13 +61,14 @@ export default function EmpleadoPage() {
     const file = e.target.files?.[0]
     if (!file) return
     setUploadError('')
+    setSelectedFile(file)  // guardar referencia antes de que el input se desmonte
     const reader = new FileReader()
     reader.onload = (ev) => setPreview(ev.target?.result as string)
     reader.readAsDataURL(file)
   }
 
   async function handleUpload() {
-    const file = fileRef.current?.files?.[0]
+    const file = selectedFile  // usar estado, no ref (el input puede estar desmontado)
     if (!file) return setUploadError('Seleccioná una imagen primero')
 
     setUploading(true)
@@ -89,6 +91,7 @@ export default function EmpleadoPage() {
       }
 
       setPreview(null)
+      setSelectedFile(null)
       if (fileRef.current) fileRef.current.value = ''
       await cargarDatos()
     } catch {
@@ -151,7 +154,7 @@ export default function EmpleadoPage() {
           <div className="flex gap-3">
             {preview && (
               <button
-                onClick={() => { setPreview(null); if (fileRef.current) fileRef.current.value = '' }}
+                onClick={() => { setPreview(null); setSelectedFile(null); if (fileRef.current) fileRef.current.value = '' }}
                 className="flex-1 border border-gray-300 text-gray-600 rounded-lg py-2.5 text-sm hover:bg-gray-50 transition-colors"
               >
                 Cambiar foto
